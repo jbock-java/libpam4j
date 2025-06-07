@@ -11,3 +11,4 @@ build
 /examples/out
 /gradle.properties
 /login
+/tags

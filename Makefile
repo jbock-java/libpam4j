@@ -4,6 +4,6 @@ default:
 	$(CXX) $(CXXFLAGS) -Ilibpamc/include -Ilibpam_misc/include -lpam -lpam_misc login.c -o login
 
 tags:
-	ctags --recurse=yes --exclude=.git
+	ctags --recurse=yes --exclude=.git --exclude=src
 
 .PHONY: tags

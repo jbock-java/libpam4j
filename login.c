@@ -9,10 +9,21 @@
  * account.
  */
 
+#include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+#include <termios.h>
+#include <time.h>
+#include <unistd.h>
 
 #include <security/pam_appl.h>
 #include <security/pam_misc.h>
+
+#define INPUTSIZE PAM_MISC_CONV_BUFSIZE      /* maximum length of input+1 */
+#define CONV_ECHO_ON  1                            /* types of echo state */
+#define CONV_ECHO_OFF 0
 
 static int bail_out(pam_handle_t *pamh, int code, const char *fn)
 {
@@ -22,21 +33,48 @@ static int bail_out(pam_handle_t *pamh, int code, const char *fn)
   return 1;
 }
 
+char* password = NULL;
+
+int my_conv(int num_msg, const struct pam_message **msgm,
+    struct pam_response **response, void *appdata_ptr) {
+  struct pam_response *reply;
+
+  if (num_msg <= 0) {
+    return PAM_CONV_ERR;
+  }
+
+  reply = (pam_response*) calloc(num_msg, sizeof(struct pam_response));
+  if (reply == NULL) {
+    fprintf(stderr, "no memory for responses\n");
+    return PAM_CONV_ERR;
+  }
+
+  reply[0].resp_retcode = 0;
+  reply[0].resp = password;
+
+  *response = reply;
+  reply = NULL;
+
+  return PAM_SUCCESS;
+}
+
 int main(int argc, char **argv)
 {
   pam_handle_t *pamh = NULL;
   char *username = NULL;
   int retcode;
   struct pam_conv conv = {
-    misc_conv,
+    my_conv,
     NULL
   };
 
   /* did the user call with a username as an argument ? */
-  if (argc == 2) {
+  if (argc == 3) {
     username = argv[1];
+    password = (char*) malloc(strlen(argv[2]) * sizeof(char));
+    strcpy(password, argv[2]);
   } else {
-    fprintf(stderr, "usage: %s [username]\n", argv[0]);
+    fprintf(stderr, "usage: %s [username] [password]\n", argv[0]);
     return 1;
   }
 
