@@ -9,74 +9,73 @@
  * account.
  */
 
-#include <signal.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/types.h>
-#include <termios.h>
-#include <time.h>
-#include <unistd.h>
+#include <pwd.h>
 
 #include <security/pam_appl.h>
 #include <security/pam_misc.h>
 
-#define INPUTSIZE PAM_MISC_CONV_BUFSIZE      /* maximum length of input+1 */
-#define CONV_ECHO_ON  1                            /* types of echo state */
-#define CONV_ECHO_OFF 0
-
-static int bail_out(pam_handle_t *pamh, int code, const char *fn)
-{
+static int bail_out(pam_handle_t *pamh, int code, const char *fn) {
   fprintf(stderr, "==> called %s()\n  got: `%s'\n", fn,
       pam_strerror(pamh, code));
   pam_end(pamh, PAM_SUCCESS);
   return 1;
 }
 
-char* password = NULL;
-
-int my_conv(int num_msg, const struct pam_message **msgm,
-    struct pam_response **response, void *appdata_ptr) {
-  struct pam_response *reply;
-
+int my_conv(
+    int num_msg,
+    const struct pam_message **msgm,
+    struct pam_response **response,
+    void *appdata_ptr) {
   if (num_msg <= 0) {
     return PAM_CONV_ERR;
   }
-
+  struct pam_response *reply;
   reply = (pam_response*) calloc(num_msg, sizeof(struct pam_response));
   if (reply == NULL) {
     fprintf(stderr, "no memory for responses\n");
     return PAM_CONV_ERR;
   }
-
-  reply[0].resp_retcode = 0;
-  reply[0].resp = password;
-
+  for (int count = 0; count < num_msg; count++) {
+    int style = msgm[count]->msg_style;
+    switch (style) {
+      case PAM_PROMPT_ECHO_OFF:
+      case PAM_PROMPT_ECHO_ON:
+        reply[count].resp_retcode = 0;
+        reply[count].resp = (char*) appdata_ptr;
+        break;
+      case PAM_ERROR_MSG:
+        fprintf(stderr, "PAM_ERROR: %s\n", msgm[count]->msg);
+        break;
+      case PAM_TEXT_INFO:
+        fprintf(stdout, "PAM_INFO: %s\n", msgm[count]->msg);
+        break;
+      default:
+        fprintf(stdout, "ignoring msg_style %d\n", style);
+        break;
+    }
+  }
   *response = reply;
-  reply = NULL;
-
   return PAM_SUCCESS;
 }
 
-int main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
   pam_handle_t *pamh = NULL;
   char *username = NULL;
   int retcode;
-  struct pam_conv conv = {
-    my_conv,
-    NULL
-  };
 
   /* did the user call with a username as an argument ? */
-  if (argc == 3) {
-    username = argv[1];
-    password = (char*) malloc(strlen(argv[2]) * sizeof(char));
-    strcpy(password, argv[2]);
-  } else {
+  if (argc != 3) {
     fprintf(stderr, "usage: %s [username] [password]\n", argv[0]);
     return 1;
   }
+  username = argv[1];
+  char* password = (char*) malloc(strlen(argv[2]) * sizeof(char));
+  strcpy(password, argv[2]);
+  struct pam_conv conv = {
+    my_conv,
+    password /* this is the `appdata_ptr' */
+  };
 
   /* initialize the Linux-PAM library */
   retcode = pam_start("login", username, &conv, &pamh);
@@ -96,6 +95,24 @@ int main(int argc, char **argv)
   if (retcode != PAM_SUCCESS) {
     return bail_out(pamh, retcode, "pam_setcred1");
   }
+
+  retcode = pam_acct_mgmt(pamh, 0);
+  if (retcode != PAM_SUCCESS) {
+    return bail_out(pamh, retcode, "pam_acct_mgmt");
+  }
+
+  const void *item = NULL;
+  retcode = pam_get_item(pamh, PAM_USER, &item);
+  if (retcode != PAM_SUCCESS) {
+    return bail_out(pamh, retcode, "pam_get_item");
+  }
+  char *user_name = (char*) item;
+  struct passwd *pwd = getpwnam(user_name);
+  fprintf(stdout, "user:      %s\n", pwd->pw_name);
+  fprintf(stdout, "uid:       %d\n", pwd->pw_uid);
+  fprintf(stdout, "gid:       %d\n", pwd->pw_gid);
+  fprintf(stdout, "homedir:   %s\n", pwd->pw_dir);
+  fprintf(stdout, "shell:     %s\n", pwd->pw_shell);
 
   /* open a session for the user --- `0' could be PAM_SILENT */
   retcode = pam_open_session(pamh, 0);
