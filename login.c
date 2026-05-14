@@ -11,10 +11,10 @@
 
 #define INPUTSIZE 4096 /* maximum length of input+1 */
 
-static int bail_out(pam_handle_t *pamh, int retval, const char *fn) {
+static int bail_out(pam_handle_t *m_handle, int retval, const char *fn) {
 	fprintf(stderr, "==> called %s()\n  got: `%s' (%d)\n", fn,
-		pam_strerror(pamh, retval), retval);
-	pam_end(pamh, retval);
+		pam_strerror(m_handle, retval), retval);
+	pam_end(m_handle, retval);
 	return 1;
 }
 
@@ -87,7 +87,7 @@ int my_conv(
 }
 
 int main(int argc, char **argv) {
-	pam_handle_t *pamh = NULL;
+	pam_handle_t *m_handle = NULL;
 	char *username;
 	char* password;
 	int retval;
@@ -109,33 +109,36 @@ int main(int argc, char **argv) {
 	};
 
 	/* initialize the Linux-PAM library */
-	retval = pam_start("other", username, &conv, &pamh);
+	retval = pam_start("other", username, &conv, &m_handle);
 	if (retval != PAM_SUCCESS) {
-		return bail_out(pamh, retval, "pam_start");
+		return bail_out(m_handle, retval, "pam_start");
 	}
 
 	/* authenticate the user --- `0' here, could have been PAM_SILENT
 	 *  | PAM_DISALLOW_NULL_AUTHTOK */
-	retval = pam_authenticate(pamh, 0);
+	retval = pam_authenticate(m_handle, 0);
 	if (retval != PAM_SUCCESS) {
-		return bail_out(pamh, retval, "pam_authenticate");
+		return bail_out(m_handle, retval, "pam_authenticate");
 	}
 
-	retval = pam_acct_mgmt(pamh, 0);       /* permitted access? */
+	retval = pam_acct_mgmt(m_handle, PAM_SILENT);       /* permitted access? */
+	if (retval == PAM_NEW_AUTHTOK_REQD) {
+		retval = pam_chauthtok(m_handle, PAM_SILENT);
+	}
 	if (retval != PAM_SUCCESS) {
-		return bail_out(pamh, retval, "pam_acct_mngt");
+		return bail_out(m_handle, retval, "pam_acct_mngt");
 	}
 
 	/* `0' could be as above */
-	retval = pam_setcred(pamh, PAM_ESTABLISH_CRED);
+	retval = pam_setcred(m_handle, PAM_ESTABLISH_CRED);
 	if (retval != PAM_SUCCESS) {
-		return bail_out(pamh, retval, "pam_setcred1");
+		return bail_out(m_handle, retval, "pam_setcred1");
 	}
 
 	const void *item = NULL;
-	retval = pam_get_item(pamh, PAM_USER, &item);
+	retval = pam_get_item(m_handle, PAM_USER, &item);
 	if (retval != PAM_SUCCESS) {
-		return bail_out(pamh, retval, "pam_get_item");
+		return bail_out(m_handle, retval, "pam_get_item");
 	}
 
 	char *user_name = (char*) item;
@@ -147,7 +150,7 @@ int main(int argc, char **argv) {
 	fprintf(stdout, "shell:     %s\n", pwd->pw_shell);
 
 	/* close the Linux-PAM library */
-	pam_end(pamh, retval);
+	pam_end(m_handle, retval);
 
 	return 0;
 }
