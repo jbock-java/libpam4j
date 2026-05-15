@@ -14,7 +14,7 @@ passwd -e foo
 Pam config.
 
 ```
-cp /etc/pam.d/sshd /etc/pam.d/other
+cp /etc/pam.d/sshd /etc/pam.d/dummy
 ```
 
 Change foo's password. Must be root.

@@ -40,21 +40,24 @@ void read_string(char **retstr) {
 	}
 }
 
+struct login_data {
+	int count;
+	char message[32];
+};
+
 int my_conv(
 		int num_msg,
 		const struct pam_message **msgm,
 		struct pam_response **response,
 		void *appdata_ptr) {
+	struct login_data *data = (login_data*) appdata_ptr;
 	char *password;
-	if (appdata_ptr == NULL) {
-		fprintf(stdout, "Password: ");
-		fflush(stdout);
-		read_string(&password);
-		fprintf(stdout, "\n");
-	} else {
-		password = (char*) appdata_ptr;
-	}
-	if (num_msg <= 0) {
+	fprintf(stderr, "Message: %s (%d)\n", data->message, data->count++);
+	fprintf(stderr, "Password: ");
+	fflush(stderr);
+	read_string(&password);
+	fprintf(stderr, "\n");
+	if (num_msg == 0) {
 		return PAM_CONV_ERR;
 	}
 	struct pam_response *reply;
@@ -72,13 +75,13 @@ int my_conv(
 				reply[count].resp = password;
 				break;
 			case PAM_ERROR_MSG:
-				fprintf(stderr, "PAM_ERROR: %s\n", msgm[count]->msg);
+				fprintf(stderr, "PAM_ERROR_MSG: %s\n", msgm[count]->msg);
 				break;
 			case PAM_TEXT_INFO:
-				fprintf(stdout, "PAM_INFO: %s\n", msgm[count]->msg);
+				fprintf(stderr, "PAM_TEXT_INFO: %s\n", msgm[count]->msg);
 				break;
 			default:
-				fprintf(stdout, "ignoring msg_style %d\n", style);
+				fprintf(stderr, "ignoring msg_style %d\n", style);
 				break;
 		}
 	}
@@ -103,19 +106,25 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 	username = argv[1];
+	struct login_data data;
+	data.count = 0;
+	strcpy(data.message, "");
+
 	struct pam_conv conv = {
 		my_conv,
-		password /* this is the `appdata_ptr' */
+		&data /* this is the `appdata_ptr' */
 	};
 
 	/* initialize the Linux-PAM library */
-	retval = pam_start("other", username, &conv, &m_handle);
+	retval = pam_start("dummy", username, &conv, &m_handle);
+	strcpy(data.message, "pam_start");
 	if (retval != PAM_SUCCESS) {
 		return bail_out(m_handle, retval, "pam_start");
 	}
 
 	/* authenticate the user --- `0' here, could have been PAM_SILENT
 	 *  | PAM_DISALLOW_NULL_AUTHTOK */
+	strcpy(data.message, "pam_authenticate");
 	retval = pam_authenticate(m_handle, 0);
 	if (retval != PAM_SUCCESS) {
 		return bail_out(m_handle, retval, "pam_authenticate");
@@ -123,19 +132,21 @@ int main(int argc, char **argv) {
 
 	retval = pam_acct_mgmt(m_handle, PAM_SILENT);       /* permitted access? */
 	if (retval == PAM_NEW_AUTHTOK_REQD) {
-		retval = pam_chauthtok(m_handle, PAM_SILENT);
+		strcpy(data.message, "pam_chauthtok");
+		retval = pam_chauthtok(m_handle, PAM_CHANGE_EXPIRED_AUTHTOK);
 	}
 	if (retval != PAM_SUCCESS) {
 		return bail_out(m_handle, retval, "pam_acct_mngt");
 	}
 
-	/* `0' could be as above */
+	strcpy(data.message, "pam_setcred");
 	retval = pam_setcred(m_handle, PAM_ESTABLISH_CRED);
 	if (retval != PAM_SUCCESS) {
 		return bail_out(m_handle, retval, "pam_setcred1");
 	}
 
 	const void *item = NULL;
+	strcpy(data.message, "pam_get_item");
 	retval = pam_get_item(m_handle, PAM_USER, &item);
 	if (retval != PAM_SUCCESS) {
 		return bail_out(m_handle, retval, "pam_get_item");
