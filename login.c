@@ -11,11 +11,11 @@
 
 #define INPUTSIZE 4096 /* maximum length of input+1 */
 
-static int bail_out(pam_handle_t *m_handle, int retval, const char *fn) {
-	fprintf(stderr, "==> called %s()\n  got: `%s' (%d)\n", fn,
+static void die(pam_handle_t *m_handle, int retval, const char *fn) {
+	fprintf(stderr, "==> called %s()\n  got: %s (%d)\n", fn,
 		pam_strerror(m_handle, retval), retval);
 	pam_end(m_handle, retval);
-	return 1;
+	exit(1);
 }
 
 void read_string(char **retstr) {
@@ -108,7 +108,7 @@ int main(int argc, char **argv) {
 	username = argv[1];
 	struct login_data data;
 	data.count = 0;
-	strcpy(data.message, "");
+	strcpy(data.message, "initial message");
 
 	struct pam_conv conv = {
 		my_conv,
@@ -117,39 +117,39 @@ int main(int argc, char **argv) {
 
 	/* initialize the Linux-PAM library */
 	retval = pam_start("dummy", username, &conv, &m_handle);
-	strcpy(data.message, "pam_start");
+	strcpy(data.message, "calling pam_start");
 	if (retval != PAM_SUCCESS) {
-		return bail_out(m_handle, retval, "pam_start");
+		die(m_handle, retval, "pam_start");
 	}
 
 	/* authenticate the user --- `0' here, could have been PAM_SILENT
 	 *  | PAM_DISALLOW_NULL_AUTHTOK */
-	strcpy(data.message, "pam_authenticate");
+	strcpy(data.message, "calling pam_authenticate");
 	retval = pam_authenticate(m_handle, 0);
 	if (retval != PAM_SUCCESS) {
-		return bail_out(m_handle, retval, "pam_authenticate");
+		die(m_handle, retval, "pam_authenticate");
 	}
 
 	retval = pam_acct_mgmt(m_handle, PAM_SILENT);       /* permitted access? */
 	if (retval == PAM_NEW_AUTHTOK_REQD) {
-		strcpy(data.message, "pam_chauthtok");
+		strcpy(data.message, "calling pam_chauthtok");
 		retval = pam_chauthtok(m_handle, PAM_CHANGE_EXPIRED_AUTHTOK);
 	}
 	if (retval != PAM_SUCCESS) {
-		return bail_out(m_handle, retval, "pam_acct_mngt");
+		die(m_handle, retval, "pam_acct_mngt");
 	}
 
-	strcpy(data.message, "pam_setcred");
+	strcpy(data.message, "calling pam_setcred");
 	retval = pam_setcred(m_handle, PAM_ESTABLISH_CRED);
 	if (retval != PAM_SUCCESS) {
-		return bail_out(m_handle, retval, "pam_setcred1");
+		die(m_handle, retval, "pam_setcred");
 	}
 
 	const void *item = NULL;
-	strcpy(data.message, "pam_get_item");
+	strcpy(data.message, "calling pam_get_item");
 	retval = pam_get_item(m_handle, PAM_USER, &item);
 	if (retval != PAM_SUCCESS) {
-		return bail_out(m_handle, retval, "pam_get_item");
+		die(m_handle, retval, "pam_get_item");
 	}
 
 	char *user_name = (char*) item;
