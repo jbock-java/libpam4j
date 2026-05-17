@@ -9,7 +9,7 @@
 #include <security/pam_appl.h>
 #include <security/pam_misc.h>
 
-#define INPUTSIZE 4096 /* maximum length of input+1 */
+#define INPUTSIZE 32 /* maximum length of input+1 */
 
 static void die(pam_handle_t *m_handle, int retval, const char *fn) {
 	fprintf(stderr, "==> called %s()\n  got: %s (%d)\n", fn,
@@ -18,7 +18,7 @@ static void die(pam_handle_t *m_handle, int retval, const char *fn) {
 	exit(1);
 }
 
-void read_string(char **retstr) {
+void read_string(char** retstr) {
 	char line[INPUTSIZE];
 	/* set echo off */
 	struct termios term_before, term_tmp;
@@ -42,7 +42,9 @@ void read_string(char **retstr) {
 
 struct login_data {
 	int count;
-	char message[32];
+	int retval;
+	char oldpw[INPUTSIZE];
+	char newpw[INPUTSIZE];
 };
 
 int my_conv(
@@ -52,11 +54,18 @@ int my_conv(
 		void *appdata_ptr) {
 	struct login_data *data = (login_data*) appdata_ptr;
 	char *password;
-	fprintf(stderr, "Message: %s (%d)\n", data->message, data->count++);
-	fprintf(stderr, "Password: ");
-	fflush(stderr);
-	read_string(&password);
-	fprintf(stderr, "\n");
+
+	if (data->retval == PAM_NEW_AUTHTOK_REQD) {
+		if (data->count == 0) {
+			password = strdup(data->oldpw);
+		} else {
+			password = strdup(data->newpw);
+		}
+		data->count++;
+	} else {
+		password = strdup(data->oldpw);
+		data->count = 0;
+	}
 	if (num_msg == 0) {
 		return PAM_CONV_ERR;
 	}
@@ -93,22 +102,17 @@ int main(int argc, char **argv) {
 	pam_handle_t *m_handle = NULL;
 	char *username;
 	char* password;
-	int retval;
 
-	/* did the user call with a username as an argument ? */
-	if (argc == 2) {
-		password = NULL;
-	} else if (argc == 3) {
-		password = (char*) malloc(strlen(argv[2]) * sizeof(char));
-		strcpy(password, argv[2]);
-	} else {
-		fprintf(stderr, "usage: %s username [password]\n", argv[0]);
+	if (argc != 2) {
+		fprintf(stderr, "usage: %s username\n", argv[0]);
 		return 1;
 	}
 	username = argv[1];
 	struct login_data data;
 	data.count = 0;
-	strcpy(data.message, "initial message");
+	data.retval = PAM_SUCCESS;
+	memset(data.oldpw, 0, sizeof data.oldpw);
+	memset(data.newpw, 0, sizeof data.newpw);
 
 	struct pam_conv conv = {
 		my_conv,
@@ -116,44 +120,66 @@ int main(int argc, char **argv) {
 	};
 
 	/* initialize the Linux-PAM library */
-	retval = pam_start("dummy", username, &conv, &m_handle);
-	strcpy(data.message, "calling pam_start");
-	if (retval != PAM_SUCCESS) {
-		die(m_handle, retval, "pam_start");
+	data.retval = pam_start("dummy", username, &conv, &m_handle);
+	if (data.retval != PAM_SUCCESS) {
+		die(m_handle, data.retval, "pam_start");
 	}
 
-	/* authenticate the user --- `0' here, could have been PAM_SILENT
-	 *  | PAM_DISALLOW_NULL_AUTHTOK */
-	strcpy(data.message, "calling pam_authenticate");
-	retval = pam_authenticate(m_handle, 0);
-	if (retval != PAM_SUCCESS) {
-		die(m_handle, retval, "pam_authenticate");
+	/* `UI' start */
+	fprintf(stderr, "password for auth: ");
+	fflush(stderr);
+	read_string(&password);
+	strcpy(data.oldpw, password);
+	fprintf(stderr, "\n");
+	/* `UI' end */
+
+	data.retval = pam_authenticate(m_handle, 0);
+	if (data.retval != PAM_SUCCESS) {
+		die(m_handle, data.retval, "pam_authenticate");
 	}
 
-	retval = pam_acct_mgmt(m_handle, PAM_SILENT);       /* permitted access? */
-	if (retval == PAM_NEW_AUTHTOK_REQD) {
-		strcpy(data.message, "calling pam_chauthtok");
-		retval = pam_chauthtok(m_handle, PAM_CHANGE_EXPIRED_AUTHTOK);
+	data.retval = pam_acct_mgmt(m_handle, PAM_SILENT);
+	if (data.retval == PAM_NEW_AUTHTOK_REQD) {
+
+		/* `UI' start */
+		while (true) {
+			fprintf(stderr, "newpw for chauthtok: ");
+			fflush(stderr);
+			read_string(&password);
+			strcpy(data.newpw, password);
+			fprintf(stderr, "\nretype newpw: ");
+			fflush(stderr);
+			read_string(&password);
+			fprintf(stderr, "\n");
+			if (strcmp(password, data.newpw) == 0) {
+				break;
+			} else {
+				fprintf(stderr, "sorry, no match\n");
+			}
+		}
+		/* `UI' end */
+
+		data.retval = pam_chauthtok(m_handle, PAM_CHANGE_EXPIRED_AUTHTOK);
+		data.count = 0;
 	}
-	if (retval != PAM_SUCCESS) {
-		die(m_handle, retval, "pam_acct_mngt");
+	if (data.retval != PAM_SUCCESS) {
+		die(m_handle, data.retval, "pam_acct_mngt");
 	}
 
-	strcpy(data.message, "calling pam_setcred");
-	retval = pam_setcred(m_handle, PAM_ESTABLISH_CRED);
-	if (retval != PAM_SUCCESS) {
-		die(m_handle, retval, "pam_setcred");
+	data.retval = pam_setcred(m_handle, PAM_ESTABLISH_CRED);
+	if (data.retval != PAM_SUCCESS) {
+		die(m_handle, data.retval, "pam_setcred");
 	}
 
 	const void *item = NULL;
-	strcpy(data.message, "calling pam_get_item");
-	retval = pam_get_item(m_handle, PAM_USER, &item);
-	if (retval != PAM_SUCCESS) {
-		die(m_handle, retval, "pam_get_item");
+	data.retval = pam_get_item(m_handle, PAM_USER, &item);
+	if (data.retval != PAM_SUCCESS) {
+		die(m_handle, data.retval, "pam_get_item");
 	}
 
 	char *user_name = (char*) item;
 	struct passwd *pwd = getpwnam(user_name);
+
 	fprintf(stdout, "user:      %s\n", pwd->pw_name);
 	fprintf(stdout, "uid:       %d\n", pwd->pw_uid);
 	fprintf(stdout, "gid:       %d\n", pwd->pw_gid);
@@ -161,7 +187,7 @@ int main(int argc, char **argv) {
 	fprintf(stdout, "shell:     %s\n", pwd->pw_shell);
 
 	/* close the Linux-PAM library */
-	pam_end(m_handle, retval);
+	pam_end(m_handle, data.retval);
 
 	return 0;
 }
