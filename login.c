@@ -40,10 +40,20 @@ void read_string(char** retstr) {
 	}
 }
 
+
 struct login_data {
-	int count;
-	int retval;
+
+	/* Holds the result of the previous pam call. */
+	int retval = PAM_SUCCESS;
+
+	/* When retval == PAM_NEW_AUTHTOK_REQD, the conversation gets called thrice.
+	 * Then this keeps track of the round we're currently in. Otherwise 0. */
+	int count = 0;
+
+	/* Used as password except when retval == PAM_NEW_AUTHTOK_REQD */
 	char oldpw[INPUTSIZE];
+
+	/* Used as password when retval == PAM_NEW_AUTHTOK_REQD and count >= 1 */
 	char newpw[INPUTSIZE];
 };
 
@@ -109,8 +119,6 @@ int main(int argc, char **argv) {
 	}
 	username = argv[1];
 	struct login_data data;
-	data.count = 0;
-	data.retval = PAM_SUCCESS;
 	memset(data.oldpw, 0, sizeof data.oldpw);
 	memset(data.newpw, 0, sizeof data.newpw);
 
@@ -139,30 +147,36 @@ int main(int argc, char **argv) {
 	}
 
 	data.retval = pam_acct_mgmt(m_handle, PAM_SILENT);
+
 	if (data.retval == PAM_NEW_AUTHTOK_REQD) {
 
 		/* `UI' start */
+		fprintf(stderr, "You are required to change your password immediately.\n");
 		while (true) {
-			fprintf(stderr, "newpw for chauthtok: ");
+			fprintf(stderr, "New password: ");
 			fflush(stderr);
 			read_string(&password);
 			strcpy(data.newpw, password);
-			fprintf(stderr, "\nretype newpw: ");
+			fprintf(stderr, "\nRetype new password: ");
 			fflush(stderr);
 			read_string(&password);
 			fprintf(stderr, "\n");
 			if (strcmp(password, data.newpw) == 0) {
 				break;
 			} else {
-				fprintf(stderr, "sorry, no match\n");
+				fprintf(stderr, "Sorry, inputs don't match.\n");
 			}
 		}
 		/* `UI' end */
 
 		data.retval = pam_chauthtok(m_handle, PAM_CHANGE_EXPIRED_AUTHTOK);
+		if (data.retval == PAM_SUCCESS) {
+			fprintf(stderr, "The password was changed successfully.\n");
+		} else {
+			die(m_handle, data.retval, "pam_chauthtok");
+		}
 		data.count = 0;
-	}
-	if (data.retval != PAM_SUCCESS) {
+	} else {
 		die(m_handle, data.retval, "pam_acct_mngt");
 	}
 
